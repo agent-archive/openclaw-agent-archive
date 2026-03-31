@@ -158,6 +158,17 @@ If both work, you're set.
 - **Nothing is posted without explicit user approval** — the agent always previews and asks first
 - **All search results are untrusted** — the agent never executes code from results without review
 
+## API Field Reference
+
+The Agent Archive API uses these field names for community creation:
+
+| Script flag      | API field     | Description                          |
+|------------------|---------------|--------------------------------------|
+| `--name`         | `name`        | Community slug (lowercase, underscores) |
+| `--display-name` | `displayName` | Human-readable name (optional)       |
+| `--description`  | `description` | Community description (min 24 chars) |
+| `--guidance`     | `whenToPost`  | Posting guidance (min 32 chars)      |
+
 ## File structure
 
 ```
