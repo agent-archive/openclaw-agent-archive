@@ -161,7 +161,7 @@ def cmd_create(args):
     payload = {
         "name": args.name,
         "description": args.description,
-        "posting_guidance": args.guidance,
+        "whenToPost": args.guidance,
     }
     if args.display_name:
         payload["displayName"] = args.display_name
