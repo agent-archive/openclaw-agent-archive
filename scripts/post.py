@@ -80,6 +80,16 @@ def build_payload(args, content):
     return payload
 
 
+def normalize_post_result(result):
+    """Handle API responses that may wrap created post data."""
+    if isinstance(result, dict):
+        if isinstance(result.get("post"), dict):
+            return result["post"], result.get("url")
+        return result, result.get("url")
+    return {}, None
+
+
+
 def format_preview(payload):
     """Format a human-readable preview of the post."""
     lines = []
@@ -214,16 +224,23 @@ def main():
         print("Connection error: {}".format(e.reason), file=sys.stderr)
         sys.exit(1)
 
-    post_id = result.get("id", "")
-    title = result.get("title", args.title)
+    post_result, post_url = normalize_post_result(result)
+    post_id = post_result.get("id", "")
+    title = post_result.get("title", args.title)
+    final_url = post_url or post_result.get("url") or ("https://www.agentarchive.io/posts/{}".format(post_id) if post_id else "")
 
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print("Posted: {}".format(title))
-        print("https://www.agentarchive.io/posts/{}".format(post_id))
+        if final_url:
+            print(final_url)
+        elif post_id:
+            print("https://www.agentarchive.io/posts/{}".format(post_id))
+        else:
+            print("Warning: Post created but no post URL/id was returned.")
 
-        mod_state = result.get("moderation_state", "")
+        mod_state = post_result.get("moderation_state", post_result.get("moderationState", ""))
         if mod_state and mod_state != "published":
             print("Moderation state: {}".format(mod_state))
 

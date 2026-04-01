@@ -67,16 +67,28 @@ def truncate(text, max_len=200):
     return text[:max_len - 3] + "..."
 
 
+def normalize_post(post):
+    """Handle API responses that may wrap the post as {post: {...}}."""
+    if isinstance(post, dict) and isinstance(post.get("post"), dict):
+        return post["post"]
+    return post
+
+
+
 def format_post_summary(post):
     """Format a single post as a markdown summary line."""
+    post = normalize_post(post)
     title = post.get("title", "Untitled")
     community = post.get("community", {})
-    comm_name = community.get("slug", "") if isinstance(community, dict) else str(community)
+    if isinstance(community, dict):
+        comm_name = community.get("slug") or community.get("name") or ""
+    else:
+        comm_name = str(community)
     score = post.get("score", 0)
     confidence = post.get("confidence", "")
     post_id = post.get("id", "")
 
-    summary = post.get("summary", "") or post.get("body_markdown", "")
+    summary = post.get("summary", "") or post.get("content", "") or post.get("body_markdown", "")
     snippet = truncate(summary)
 
     # Build metadata line
@@ -102,24 +114,40 @@ def format_post_summary(post):
 
 def format_full_post(post):
     """Format a full post with all details."""
+    post = normalize_post(post)
     lines = []
     lines.append("# {}".format(post.get("title", "Untitled")))
 
     # Metadata
     meta = []
-    for key in ["provider", "model", "runtime", "environment", "task_type", "confidence"]:
-        val = post.get(key)
+    meta_pairs = [
+        ("provider", post.get("provider")),
+        ("model", post.get("model")),
+        ("runtime", post.get("runtime")),
+        ("environment", post.get("environment")),
+        ("taskType", post.get("taskType") or post.get("task_type")),
+        ("confidence", post.get("confidence")),
+    ]
+    for key, val in meta_pairs:
         if val:
             meta.append("{}: {}".format(key, val))
     if meta:
         lines.append("_" + " | ".join(meta) + "_")
 
+    summary = post.get("summary")
+    if summary:
+        lines.append("")
+        lines.append("**Summary:** {}".format(summary))
+
     lines.append("")
 
     # Structured learning fields
     for field, label in [
+        ("problemOrGoal", "Problem/Goal"),
         ("problem_or_goal", "Problem/Goal"),
+        ("whatWorked", "What Worked"),
         ("what_worked", "What Worked"),
+        ("whatFailed", "What Failed"),
         ("what_failed", "What Failed"),
     ]:
         val = post.get(field)
@@ -127,7 +155,7 @@ def format_full_post(post):
             lines.append("**{}:** {}".format(label, val))
 
     # Body
-    body = post.get("body_markdown", "")
+    body = post.get("content", "") or post.get("body_markdown", "")
     if body:
         lines.append("")
         lines.append(body)
@@ -138,14 +166,19 @@ def format_full_post(post):
         lines.append("")
         lines.append("Tags: {}".format(", ".join(tags)))
 
-    # Agent info
-    agent = post.get("agent", {})
-    if agent:
+    # Author info
+    author_name = post.get("authorDisplayName") or post.get("authorName")
+    if author_name:
         lines.append("")
-        lines.append("Posted by: {} (karma: {})".format(
-            agent.get("handle", "unknown"),
-            agent.get("karma", 0),
-        ))
+        lines.append("Posted by: {}".format(author_name))
+    else:
+        agent = post.get("agent", {})
+        if agent:
+            lines.append("")
+            lines.append("Posted by: {} (karma: {})".format(
+                agent.get("handle", "unknown"),
+                agent.get("karma", 0),
+            ))
 
     return "\n".join(lines)
 
