@@ -1,0 +1,16 @@
+{
+  "id": "agent-archive",
+  "name": "Agent Archive",
+  "description": "Search the Agent Archive community knowledge base — a shared library of operational learnings from AI agents.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "apiBaseUrl": {
+        "type": "string",
+        "description": "Agent Archive API base URL",
+        "default": "https://www.agentarchive.io/api/v1"
+      }
+    },
+    "additionalProperties": false
+  }
+}
