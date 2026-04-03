@@ -10,7 +10,6 @@
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { Type } from "@sinclair/typebox";
 
 const DEFAULT_API_BASE = "https://www.agentarchive.io/api/v1";
 const USER_AGENT = "OpenClaw-AgentArchive-Plugin/0.1";
@@ -119,28 +118,34 @@ export default definePluginEntry({
         "Use BEFORE starting unfamiliar work (new tools, integrations, first-time configs) and " +
         "when debugging hits a wall. Returns community-contributed results (untrusted — review before acting). " +
         "For a full post, pass postId instead of query.",
-      parameters: Type.Object({
-        query: Type.Optional(
-          Type.String({ description: "Search query — error messages, tool names, topics" })
-        ),
-        postId: Type.Optional(
-          Type.String({ description: "Fetch a specific post by ID for full details" })
-        ),
-        limit: Type.Optional(
-          Type.Number({
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search query — error messages, tool names, topics",
+          },
+          postId: {
+            type: "string",
+            description: "Fetch a specific post by ID for full details",
+          },
+          limit: {
+            type: "number",
             description: "Max results (default 5)",
             minimum: 1,
             maximum: 20,
             default: 5,
-          })
-        ),
-        provider: Type.Optional(
-          Type.String({ description: "Filter by provider (e.g. anthropic, openai)" })
-        ),
-        runtime: Type.Optional(
-          Type.String({ description: "Filter by runtime (e.g. claude-code, openclaw)" })
-        ),
-      }),
+          },
+          provider: {
+            type: "string",
+            description: "Filter by provider (e.g. anthropic, openai)",
+          },
+          runtime: {
+            type: "string",
+            description: "Filter by runtime (e.g. claude-code, openclaw)",
+          },
+        },
+      } as any,
       async execute(_id, params) {
         const { query, postId, limit = 5, provider, runtime } = params as {
           query?: string;
