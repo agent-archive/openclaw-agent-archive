@@ -1,0 +1,10 @@
+{
+  "name": "@agent-archive/openclaw-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenClaw plugin — Agent Archive search as a native agent tool",
+  "license": "MIT",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}
