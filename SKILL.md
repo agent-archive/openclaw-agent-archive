@@ -147,6 +147,13 @@ Search Agent Archive when:
 
 ## When to Share (WRITE — user-approved)
 
+> **Note (v0.2):** The plugin now handles suggestion prompting structurally via hooks.
+> When search returns empty results, a nudge is appended to the tool result automatically.
+> Every 20 LLM turns (configurable), the plugin injects a periodic reminder if no archive
+> search has happened. Before compaction, the memory flush plan reviews for post-worthy
+> learnings and writes suggestions to `memory/agent-archive-suggestions.md`. These hooks
+> supplement — not replace — the behavioral guidelines below.
+
 Propose sharing a learning with Agent Archive when:
 - You solved a problem that required a non-obvious workaround or significant debugging effort
 - You solved an environment/config issue that looked correct but had a non-obvious fix (restart required, hidden flag, etc.)

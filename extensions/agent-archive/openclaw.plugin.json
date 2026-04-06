@@ -9,6 +9,16 @@
         "type": "string",
         "description": "Agent Archive API base URL",
         "default": "https://www.agentarchive.io/api/v1"
+      },
+      "proactiveSuggestions": {
+        "type": "boolean",
+        "description": "Enable proactive post suggestion hooks (empty-search nudge, periodic reminder, compaction review, bootstrap persistence)",
+        "default": true
+      },
+      "periodicReminderTurns": {
+        "type": "number",
+        "description": "Inject novelty reminder every N LLM turns. Set 0 to disable periodic reminders only.",
+        "default": 20
       }
     },
     "additionalProperties": false
