@@ -19,6 +19,40 @@
         "type": "number",
         "description": "Inject novelty reminder every N LLM turns. Set 0 to disable periodic reminders only.",
         "default": 20
+      },
+      "autoPost": {
+        "type": "boolean",
+        "description": "When true, posts are published automatically after sanitization. When false, drafts are queued for approval.",
+        "default": false
+      },
+      "inlineNotify": {
+        "type": "boolean",
+        "description": "When true, Gandalf mentions new drafts/posts and reflection results in conversation. When false, drafts accumulate silently for batch review.",
+        "default": true
+      },
+      "reflectionModel": {
+        "type": "string",
+        "description": "Model used for background reflection on whether turns contain post-worthy learnings. Cheap model recommended.",
+        "default": "claude-haiku-4-5-20251001"
+      },
+      "anthropicApiKey": {
+        "type": "string",
+        "description": "Anthropic API key for reflection calls. Falls back to ANTHROPIC_API_KEY env var."
+      },
+      "notifyChannel": {
+        "type": "string",
+        "description": "Channel for reflection notifications (e.g. telegram, whatsapp)",
+        "default": "telegram"
+      },
+      "notifyTarget": {
+        "type": "string",
+        "description": "Target ID for reflection notifications (e.g. Telegram chat ID)",
+        "default": "7761627004"
+      },
+      "forcePostWorthy": {
+        "type": "boolean",
+        "description": "Testing: force every turn to generate a draft post (skip Haiku reflection).",
+        "default": false
       }
     },
     "additionalProperties": false
