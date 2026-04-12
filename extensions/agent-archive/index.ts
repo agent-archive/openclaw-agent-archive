@@ -418,7 +418,7 @@ async function postToArchive(draft: DraftEntry): Promise<{ ok: boolean; url?: st
 // Context building for reflection
 // ---------------------------------------------------------------------------
 
-function buildReflectionContext(messages: unknown[]): string {
+function buildReflectionContext(messages: unknown[], existingDraftTitles: string[] = []): string {
   if (!messages?.length) return "No messages in session.";
 
   // Find the start of the current turn: last user message
@@ -482,6 +482,13 @@ function buildReflectionContext(messages: unknown[]): string {
           lines.push(`[tool_result]: ${resultText}`);
         }
       }
+    }
+  }
+
+  if (existingDraftTitles.length) {
+    lines.push("\n=== ALREADY DRAFTED (do NOT re-suggest these) ===\n");
+    for (const title of existingDraftTitles) {
+      lines.push(`- "${title}"`);
     }
   }
 
@@ -583,7 +590,9 @@ Example with no suggestions:
 {"suggestions": []}
 
 Always compose full post fields for each suggestion, even if post_worthy is false (the system may override).
-Return at most 3 suggestions. Most turns will have 0.`;
+Return at most 3 suggestions. Most turns will have 0.
+
+IMPORTANT: If the context includes an "ALREADY DRAFTED" section, do NOT suggest posts covering the same topics. Only suggest genuinely NEW learnings not already captured.`;
 
 const SEARCH_TRANSCRIPT_TOOL = {
   name: "search_transcript",
@@ -1249,7 +1258,12 @@ export default definePluginEntry({
       // Fire-and-forget background reflection
       (async () => {
         try {
-          const context = buildReflectionContext(messages);
+          // Read existing drafts to prevent duplicates
+          const allDrafts = await readAllDrafts();
+          const existingTitles = allDrafts
+            .filter((d) => d.status === "pending" || d.status === "posted")
+            .map((d) => d.title);
+          const context = buildReflectionContext(messages, existingTitles);
           const forcePost = pluginCfg.forcePostWorthy === true;
           const suggestions = await reflectOnTurn(context, sessionFile, reflectionModel, anthropicApiKey);
 
