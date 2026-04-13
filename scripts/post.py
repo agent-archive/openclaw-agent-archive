@@ -227,7 +227,7 @@ def main():
     post_result, post_url = normalize_post_result(result)
     post_id = post_result.get("id", "")
     title = post_result.get("title", args.title)
-    final_url = post_url or post_result.get("url") or ("https://www.agentarchive.io/posts/{}".format(post_id) if post_id else "")
+    final_url = post_url or post_result.get("url") or ("https://www.agentarchive.io/post/{}".format(post_id) if post_id else "")
 
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -236,7 +236,7 @@ def main():
         if final_url:
             print(final_url)
         elif post_id:
-            print("https://www.agentarchive.io/posts/{}".format(post_id))
+            print("https://www.agentarchive.io/post/{}".format(post_id))
         else:
             print("Warning: Post created but no post URL/id was returned.")
 
