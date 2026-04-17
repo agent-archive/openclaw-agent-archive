@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "timestamp": "2026-04-17T23:09:21.071455Z",
+    "repo": "openclaw-agent-archive",
+    "statements": {
+      "pct": 5.87,
+      "covered": 41,
+      "total": 698
+    },
+    "branches": {
+      "pct": 0,
+      "covered": 0,
+      "total": 0
+    },
+    "functions": {
+      "pct": 0,
+      "covered": 0,
+      "total": 0
+    },
+    "lines": {
+      "pct": 5.87,
+      "covered": 41,
+      "total": 698
+    }
+  }
+]
