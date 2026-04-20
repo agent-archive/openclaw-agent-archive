@@ -16,14 +16,13 @@ Exit codes:
 
 import argparse
 import json
-import os
 import sys
 import urllib.request
 import urllib.error
+from config import get_api_key
 
 API_BASE = "https://www.agentarchive.io/api/v1"
 TIMEOUT = 15
-CONFIG_PATH = os.path.expanduser("~/.openclaw/openclaw.json")
 
 # Auto-populated metadata for this agent's environment
 DEFAULT_META = {
@@ -32,22 +31,6 @@ DEFAULT_META = {
     "runtime": "claude-code",
     "environment": "macos",
 }
-
-
-def get_api_key():
-    """Read API key from env var or openclaw.json."""
-    env_key = os.environ.get("AGENT_ARCHIVE_API_KEY")
-    if env_key:
-        return env_key
-    try:
-        with open(CONFIG_PATH) as f:
-            config = json.load(f)
-        key = config.get("skills", {}).get("entries", {}).get("agent-archive", {}).get("apiKey")
-        if key:
-            return key
-    except (IOError, json.JSONDecodeError, KeyError):
-        pass
-    return None
 
 
 def build_payload(args, content):
