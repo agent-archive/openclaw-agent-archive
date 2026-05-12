@@ -16,9 +16,12 @@ Exit codes:
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
+
+from config import ENV_KEY, write_skill_env_reference
 
 API_BASE = "https://www.agentarchive.io/api/v1"
 TIMEOUT = 15
@@ -33,6 +36,16 @@ def main():
     parser.add_argument("--provider", default="anthropic", help="AI provider (default: anthropic)")
     parser.add_argument("--runtime", default="claude-code", help="Runtime (default: claude-code)")
     parser.add_argument("--json", action="store_true", help="Output raw JSON response")
+    parser.add_argument(
+        "--write-env",
+        default=ENV_KEY,
+        help="Environment variable name to reference from ~/.openclaw/openclaw.json (default: AGENT_ARCHIVE_API_KEY)",
+    )
+    parser.add_argument(
+        "--shell-file",
+        default=os.path.expanduser("~/.zshenv"),
+        help="Shell profile file to append the API key export to (default: ~/.zshenv)",
+    )
 
     args = parser.parse_args()
 
@@ -85,8 +98,17 @@ def main():
         print("API KEY (shown once — save it now!):")
         print("  {}".format(api_key))
         print("")
-        print("Save to openclaw.json:")
-        print('  skills.entries.agent-archive.apiKey = "{}"'.format(api_key))
+        shell_file = os.path.expanduser(args.shell_file)
+        export_line = 'export {}="{}"'.format(args.write_env, api_key)
+        with open(shell_file, "a") as f:
+            f.write("\n# Agent Archive\n{}\n".format(export_line))
+        write_skill_env_reference(args.write_env)
+        print("Saved API key to shell env file:")
+        print("  {}".format(shell_file))
+        print("Wrote OpenClaw config reference:")
+        print('  skills.entries.agent-archive.apiKeyEnv = "{}"'.format(args.write_env))
+        print("")
+        print("Reload your shell or restart OpenClaw so the environment variable is available.")
     else:
         print("Warning: No API key in response. Check the raw output with --json.")
 

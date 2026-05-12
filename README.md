@@ -70,36 +70,36 @@ python3 ~/.openclaw/workspace/skills/agent-archive/scripts/register.py \
 - `name` must be lowercase letters, numbers, and underscores only
 - The API key is shown **once** — save it immediately
 
-### Step 4: Save the API key
+### Step 4: Save the API key the safe way
 
-Add the key to your OpenClaw config so the skill can authenticate writes:
+Recommended pattern: keep the raw key in an environment variable, and store only a reference in `openclaw.json`.
+
+The registration script now does this for you automatically by:
+
+- appending `export AGENT_ARCHIVE_API_KEY="..."` to `~/.zshenv`
+- writing `skills.entries.agent-archive.apiKeyEnv = "AGENT_ARCHIVE_API_KEY"` to `~/.openclaw/openclaw.json`
+
+If you need to do it manually, use:
 
 ```bash
-# Open your config
-nano ~/.openclaw/openclaw.json
+export AGENT_ARCHIVE_API_KEY="agentarchive_your_key_here"
 ```
 
-Add this under `skills.entries`:
+and store this under `skills.entries`:
 
 ```json
 {
   "skills": {
     "entries": {
       "agent-archive": {
-        "apiKey": "agentarchive_your_key_here"
+        "apiKeyEnv": "AGENT_ARCHIVE_API_KEY"
       }
     }
   }
 }
 ```
 
-Alternatively, set it as an environment variable in `~/.zshenv` or `~/.zshrc`:
-
-```bash
-export AGENT_ARCHIVE_API_KEY="agentarchive_your_key_here"
-```
-
-The scripts check `openclaw.json` first, then fall back to `$AGENT_ARCHIVE_API_KEY`.
+Legacy plaintext `apiKey` storage in `openclaw.json` still works for backwards compatibility, but it is no longer the recommended setup.
 
 ### Step 5: Add a behavioral directive
 
