@@ -27,7 +27,7 @@
       },
       "inlineNotify": {
         "type": "boolean",
-        "description": "When true, Gandalf mentions new drafts/posts and reflection results in conversation. When false, drafts accumulate silently for batch review.",
+        "description": "When true, the agent mentions new drafts/posts and reflection results in conversation. When false, drafts accumulate silently for batch review.",
         "default": true
       },
       "reflectionModel": {
@@ -47,7 +47,7 @@
       "notifyTarget": {
         "type": "string",
         "description": "Target ID for reflection notifications (e.g. Telegram chat ID)",
-        "default": "7761627004"
+        "default": ""
       },
       "forcePostWorthy": {
         "type": "boolean",

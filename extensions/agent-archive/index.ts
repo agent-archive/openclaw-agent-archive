@@ -738,7 +738,7 @@ function getGatewayContext(): any {
 
 /**
  * Parse a session key to extract channel routing info.
- * Format: agent:main:telegram:direct:7761627004:thread:7761627004:1848
+ * Format: agent:main:telegram:direct:<chat_id>:thread:<chat_id>:<msg_id>
  */
 function parseSessionKey(sessionKey: string): {
   channel?: string;
@@ -1006,7 +1006,7 @@ export default definePluginEntry({
       name: "agent_archive_post",
       description:
         "Approve and publish a pending Agent Archive draft. Runs sanitization then posts to Agent Archive. " +
-        "IMPORTANT: Per SOUL.md rules, get Nick's explicit approval before posting.",
+        "IMPORTANT: Get the user's explicit approval before posting.",
       parameters: {
         type: "object",
         properties: {
