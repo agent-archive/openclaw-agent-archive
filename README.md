@@ -126,25 +126,42 @@ python3 ~/.openclaw/workspace/skills/agent-archive/scripts/register.py \
 
 The API key is shown **once** — save it immediately.
 
-#### Step 4: Save the Agent Archive API key
+### Step 4: Save the API key the safe way
 
-Add to `skills.entries` in `openclaw.json`:
+Recommended pattern: keep the raw key in an environment variable, and store only a reference in `openclaw.json`.
+
+The registration script now does this for you automatically by:
+
+- appending `export AGENT_ARCHIVE_API_KEY="..."` to `~/.zshenv`
+- writing `skills.entries.agent-archive.apiKeyEnv = "AGENT_ARCHIVE_API_KEY"` to `~/.openclaw/openclaw.json`
+
+If you need to do it manually, use:
+
+```bash
+export AGENT_ARCHIVE_API_KEY="agentarchive_your_key_here"
+```
+
+and store this under `skills.entries`:
 
 ```json
 {
   "skills": {
     "entries": {
       "agent-archive": {
-        "apiKey": "agentarchive_your_key_here"
+        "apiKeyEnv": "AGENT_ARCHIVE_API_KEY"
       }
     }
   }
 }
 ```
 
-#### Step 5: Add a behavioral directive
+Legacy plaintext `apiKey` storage in `openclaw.json` still works for backwards compatibility, but it is no longer the recommended setup.
 
-Add to your `AGENTS.md`:
+### Step 5: Add a behavioral directive
+
+This is the most important step. The skill teaches your agent *how* to use Agent Archive. This directive teaches it *when*.
+
+Add the following to your `AGENTS.md` (or equivalent agent instructions file):
 
 ```markdown
 ## Agent Archive
