@@ -22,8 +22,11 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile, appendFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
@@ -31,8 +34,14 @@ const DEFAULT_API_BASE = "https://www.agentarchive.io/api/v1";
 const USER_AGENT = "OpenClaw-AgentArchive-Plugin/0.3";
 const TIMEOUT_MS = 10_000;
 const REFLECTION_TIMEOUT_MS = 60_000;
-const SCRIPTS_DIR = join(dirname(dirname(dirname(import.meta.url.replace("file://", "")))), "scripts");
-const QUEUE_FILE = join(dirname(dirname(dirname(import.meta.url.replace("file://", "")))), "queue.jsonl");
+const RUNTIME_DIR = dirname(fileURLToPath(import.meta.url));
+const EXTENSION_DIR = basename(RUNTIME_DIR) === "dist" ? dirname(RUNTIME_DIR) : RUNTIME_DIR;
+const REPO_ROOT = resolve(EXTENSION_DIR, "..", "..");
+const PACKAGED_SCRIPTS_DIR = join(EXTENSION_DIR, "scripts");
+const REPO_SCRIPTS_DIR = join(REPO_ROOT, "scripts");
+const SCRIPTS_DIR = existsSync(PACKAGED_SCRIPTS_DIR) ? PACKAGED_SCRIPTS_DIR : REPO_SCRIPTS_DIR;
+const DEFAULT_QUEUE_DIR = join(homedir(), ".agents", "agent-archive", "pending-posts");
+let queueDir = DEFAULT_QUEUE_DIR;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,48 +213,252 @@ function formatFullPost(post: ArchivePost): string {
 }
 
 // ---------------------------------------------------------------------------
-// Draft queue management (JSONL)
+// Draft queue management (portable Markdown + legacy JSONL read support)
 // ---------------------------------------------------------------------------
 
-async function appendDraft(draft: DraftEntry): Promise<void> {
-  await mkdir(dirname(QUEUE_FILE), { recursive: true });
-  await appendFile(QUEUE_FILE, JSON.stringify(draft) + "\n", "utf-8");
+interface StoredDraft extends DraftEntry {
+  filePath?: string;
+  source?: "markdown" | "legacy-jsonl";
 }
 
-async function readAllDrafts(): Promise<DraftEntry[]> {
+function expandHome(input: string): string {
+  if (input === "~") return homedir();
+  if (input.startsWith("~/")) return join(homedir(), input.slice(2));
+  return input;
+}
+
+function configureQueueDir(input?: string): void {
+  queueDir = input ? resolve(expandHome(input)) : DEFAULT_QUEUE_DIR;
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return slug || "agent-archive-draft";
+}
+
+function yamlValue(value: unknown): string {
+  return JSON.stringify(value ?? "");
+}
+
+function parseYamlValue(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+  if (
+    trimmed.startsWith('"') ||
+    trimmed.startsWith("[") ||
+    trimmed.startsWith("{")
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+function parseFrontmatter(raw: string): { data: Record<string, unknown>; body: string } | null {
+  if (!raw.startsWith("---\n")) return null;
+  const end = raw.indexOf("\n---", 4);
+  if (end < 0) return null;
+  const frontmatter = raw.slice(4, end).trim();
+  const body = raw.slice(end + 4).replace(/^\n/, "");
+  const data: Record<string, unknown> = {};
+  for (const line of frontmatter.split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key) data[key] = parseYamlValue(value);
+  }
+  return { data, body };
+}
+
+function draftMarkdownBody(draft: DraftEntry): string {
+  const lines = [`# ${draft.title}`, ""];
+  if (draft.content.summary) {
+    lines.push("## Summary", draft.content.summary, "");
+  }
+  if (draft.content.problem) {
+    lines.push("## Problem", draft.content.problem, "");
+  }
+  if (draft.content.what_worked) {
+    lines.push("## What Worked", draft.content.what_worked, "");
+  }
+  if (draft.content.what_failed) {
+    lines.push("## What Failed", draft.content.what_failed, "");
+  }
+  if (draft.content.body) {
+    lines.push("## Body", draft.content.body, "");
+  }
+  if (draft.tags.length) {
+    lines.push("## Tags", draft.tags.map((tag) => `- ${tag}`).join("\n"), "");
+  }
+  return lines.join("\n").trim() + "\n";
+}
+
+function draftToMarkdown(draft: DraftEntry): string {
+  const portableDraft = { ...draft };
+  delete (portableDraft as StoredDraft).filePath;
+  delete (portableDraft as StoredDraft).source;
+  const frontmatter: Record<string, unknown> = {
+    id: draft.id,
+    status: draft.status,
+    createdAt: draft.createdAt,
+    title: draft.title,
+    community: draft.community,
+    confidence: draft.confidence,
+    tags: draft.tags,
+    sanitized: draft.sanitized,
+    postedAt: draft.postedAt ?? "",
+    postedUrl: draft.postedUrl ?? "",
+    dismissedAt: draft.dismissedAt ?? "",
+    failReason: draft.failReason ?? "",
+    draft_json: JSON.stringify(portableDraft),
+  };
+  const yaml = Object.entries(frontmatter)
+    .map(([key, value]) => `${key}: ${yamlValue(value)}`)
+    .join("\n");
+  return `---\n${yaml}\n---\n\n${draftMarkdownBody(draft)}`;
+}
+
+function parseDraftMarkdown(raw: string, filePath: string): StoredDraft | null {
+  const parsed = parseFrontmatter(raw);
+  if (!parsed) return null;
+  const fromJson = parsed.data.draft_json;
+  if (typeof fromJson === "string" && fromJson.trim()) {
+    try {
+      return { ...(JSON.parse(fromJson) as DraftEntry), filePath, source: "markdown" };
+    } catch {
+      // Fall through to scalar frontmatter recovery.
+    }
+  }
+
+  const id = String(parsed.data.id ?? basename(filePath, ".md"));
+  const title = String(parsed.data.title ?? "Untitled learning");
+  return {
+    id,
+    status: (String(parsed.data.status ?? "pending") as DraftEntry["status"]),
+    createdAt: String(parsed.data.createdAt ?? new Date().toISOString()),
+    title,
+    community: String(parsed.data.community ?? "general"),
+    confidence: String(parsed.data.confidence ?? "likely"),
+    content: { body: parsed.body.trim() },
+    tags: Array.isArray(parsed.data.tags) ? parsed.data.tags.map(String) : [],
+    sanitized: parsed.data.sanitized === true,
+    postedAt: parsed.data.postedAt ? String(parsed.data.postedAt) : undefined,
+    postedUrl: parsed.data.postedUrl ? String(parsed.data.postedUrl) : undefined,
+    dismissedAt: parsed.data.dismissedAt ? String(parsed.data.dismissedAt) : undefined,
+    failReason: parsed.data.failReason ? String(parsed.data.failReason) : undefined,
+    filePath,
+    source: "markdown",
+  };
+}
+
+function draftFilePath(draft: DraftEntry): string {
+  const existing = (draft as StoredDraft).filePath;
+  if (existing) return existing;
+  const day = draft.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  return join(queueDir, `${day}-${slugify(draft.title)}-${slugify(draft.id)}.md`);
+}
+
+async function writeDraftFile(draft: DraftEntry): Promise<void> {
+  await mkdir(queueDir, { recursive: true });
+  await writeFile(draftFilePath(draft), draftToMarkdown(draft), "utf-8");
+}
+
+async function appendDraft(draft: DraftEntry): Promise<void> {
+  await writeDraftFile(draft);
+}
+
+function readLegacyJsonlFile(filePath: string): StoredDraft[] {
+  if (!existsSync(filePath)) return [];
   try {
-    const raw = await readFile(QUEUE_FILE, "utf-8");
-    return raw
+    return readFileSync(filePath, "utf-8")
       .split("\n")
       .filter((line) => line.trim())
-      .map((line) => JSON.parse(line) as DraftEntry);
+      .map((line) => ({ ...(JSON.parse(line) as DraftEntry), source: "legacy-jsonl" as const }));
   } catch {
     return [];
   }
+}
+
+function legacyQueueFiles(): string[] {
+  return [
+    join(REPO_ROOT, "queue.jsonl"),
+    join(dirname(EXTENSION_DIR), "queue.jsonl"),
+  ];
+}
+
+async function readMarkdownDrafts(): Promise<StoredDraft[]> {
+  try {
+    const names = await readdir(queueDir);
+    const drafts: StoredDraft[] = [];
+    for (const name of names.filter((item) => item.endsWith(".md"))) {
+      const filePath = join(queueDir, name);
+      const parsed = parseDraftMarkdown(await readFile(filePath, "utf-8"), filePath);
+      if (parsed) drafts.push(parsed);
+    }
+    return drafts;
+  } catch {
+    return [];
+  }
+}
+
+async function readAllDrafts(): Promise<StoredDraft[]> {
+  const markdownDrafts = await readMarkdownDrafts();
+  const seen = new Set(markdownDrafts.map((draft) => draft.id));
+  const legacyDrafts = legacyQueueFiles()
+    .flatMap((filePath) => readLegacyJsonlFile(filePath))
+    .filter((draft) => {
+      if (seen.has(draft.id)) return false;
+      seen.add(draft.id);
+      return true;
+    });
+  return [...markdownDrafts, ...legacyDrafts].sort((a, b) =>
+    String(a.createdAt).localeCompare(String(b.createdAt)),
+  );
 }
 
 // Sync read of pending drafts for before_prompt_build
-function readPendingDraftsSync(): DraftEntry[] {
+function readPendingDraftsSync(): StoredDraft[] {
+  const drafts: StoredDraft[] = [];
   try {
-    const raw = require("node:fs").readFileSync(QUEUE_FILE, "utf-8") as string;
-    return raw
-      .split("\n")
-      .filter((line: string) => line.trim())
-      .map((line: string) => JSON.parse(line) as DraftEntry)
-      .filter((d: DraftEntry) => d.status === "pending");
+    const names = existsSync(queueDir) ? readdirSync(queueDir) : [];
+    for (const name of names.filter((item) => item.endsWith(".md"))) {
+      const filePath = join(queueDir, name);
+      const parsed = parseDraftMarkdown(readFileSync(filePath, "utf-8"), filePath);
+      if (parsed?.status === "pending") drafts.push(parsed);
+    }
   } catch {
-    return [];
+    // Ignore queue read failures inside prompt hooks.
   }
+  const seen = new Set(drafts.map((draft) => draft.id));
+  for (const draft of legacyQueueFiles().flatMap((filePath) => readLegacyJsonlFile(filePath))) {
+    if (draft.status === "pending" && !seen.has(draft.id)) {
+      drafts.push(draft);
+      seen.add(draft.id);
+    }
+  }
+  return drafts;
 }
 
 // Keep async version for non-hook contexts
-let pendingDraftCache: DraftEntry[] = [];
+let pendingDraftCache: StoredDraft[] = [];
 
 async function refreshPendingCache(): Promise<void> {
   pendingDraftCache = (await readAllDrafts()).filter((d) => d.status === "pending");
 }
 
-async function readPendingDrafts(): Promise<DraftEntry[]> {
+async function readPendingDrafts(): Promise<StoredDraft[]> {
   const all = await readAllDrafts();
   return all.filter((d) => d.status === "pending");
 }
@@ -254,18 +467,18 @@ async function updateDraftStatus(
   id: string,
   newStatus: DraftEntry["status"],
   extra: Partial<DraftEntry> = {},
-): Promise<DraftEntry | null> {
+): Promise<StoredDraft | null> {
   const all = await readAllDrafts();
-  let updated: DraftEntry | null = null;
-  const lines = all.map((d) => {
+  let updated: StoredDraft | null = null;
+  for (const d of all) {
     if (d.id === id) {
       d.status = newStatus;
       Object.assign(d, extra);
       updated = d;
+      await writeDraftFile(d);
+      break;
     }
-    return JSON.stringify(d);
-  });
-  await writeFile(QUEUE_FILE, lines.join("\n") + "\n", "utf-8");
+  }
   return updated;
 }
 
@@ -405,9 +618,11 @@ async function postToArchive(draft: DraftEntry): Promise<{ ok: boolean; url?: st
 
     const { stdout } = await execFileAsync("python3", args, { timeout: 15_000 });
     const result = JSON.parse(stdout);
-    const url = result.url || result.post?.id
-      ? `https://www.agentarchive.io/posts/${result.post?.id}`
-      : undefined;
+    const postId = result.post?.id ?? result.id;
+    const url =
+      result.url ||
+      result.post?.url ||
+      (postId ? `https://www.agentarchive.io/posts/${postId}` : undefined);
     return { ok: true, url };
   } catch (err: any) {
     return { ok: false, error: err.stderr || err.message };
@@ -770,7 +985,7 @@ const SENDABLE_CHANNELS = new Set([
   "msteams", "matrix", "irc", "line", "zalo",
 ]);
 
-function pushSessionNotification(sessionKey: string, text: string): void {
+function pushSessionNotification(sessionKey: string, text: string, allowChannelSend = false): void {
   // 1. Always broadcast to WebSocket clients (GUI)
   const ctx = getGatewayContext();
   if (ctx?.broadcast) {
@@ -792,7 +1007,9 @@ function pushSessionNotification(sessionKey: string, text: string): void {
     }
   }
 
-  // 2. For messaging channels (Telegram, WhatsApp, etc.), also send via CLI
+  // 2. Optional channel push. Disabled by default so outbound messages remain
+  // approval-gated by the calling agent/user workflow.
+  if (!allowChannelSend) return;
   const route = parseSessionKey(sessionKey);
   if (route.channel && SENDABLE_CHANNELS.has(route.channel) && route.chatId) {
     const args = [
@@ -827,22 +1044,28 @@ export default definePluginEntry({
   name: "Agent Archive",
   description: "Search the Agent Archive community knowledge base",
 
-  register(api) {
+  register(api: any) {
     const pluginCfg = (api.pluginConfig ?? api.getConfig?.() ?? {}) as Record<string, unknown>;
+    configureQueueDir(pluginCfg.queueDir as string | undefined);
     const apiBase = (pluginCfg.apiBaseUrl as string) ?? DEFAULT_API_BASE;
     const proactive = pluginCfg.proactiveSuggestions !== false;
     const reminderInterval = (pluginCfg.periodicReminderTurns as number) ?? 20;
-    const autoPost = pluginCfg.autoPost === true;
+    const autoPost = false;
     const inlineNotify = pluginCfg.inlineNotify !== false; // default true
+    const channelNotify = pluginCfg.channelNotify === true;
     const reflectionModel = (pluginCfg.reflectionModel as string) ?? "claude-haiku-4-5-20251001";
     const anthropicApiKey =
       (pluginCfg.anthropicApiKey as string) ||
       process.env.ANTHROPIC_API_KEY ||
       "";
 
-    const writeMode = pluginCfg.autoWrite === "off" ? "off" : (autoPost ? "auto" : "approval");
+    if (pluginCfg.autoPost === true) {
+      console.warn("[agent-archive] autoPost is ignored; posting is approval-only.");
+    }
 
-    if (!anthropicApiKey && writeMode !== "off") {
+    const writeMode = pluginCfg.autoWrite === "off" ? "off" : "approval";
+
+    if (!anthropicApiKey && writeMode !== "off" && pluginCfg.forcePostWorthy !== true) {
       console.warn("[agent-archive] No anthropicApiKey configured; write flow reflection will be disabled.");
     }
 
@@ -850,7 +1073,7 @@ export default definePluginEntry({
     // Tool 1: agent_archive_search (unchanged from v0.1)
     // ===================================================================
 
-    api.registerTool({
+    api.registerTool(() => ({
       name: "agent_archive_search",
       description:
         "Search Agent Archive — a community knowledge base of operational learnings from AI agents. " +
@@ -885,7 +1108,7 @@ export default definePluginEntry({
           },
         },
       } as any,
-      async execute(_id, params) {
+      async execute(_id: string, params: unknown) {
         const { query, postId, limit = 5, provider, runtime } = params as {
           query?: string;
           postId?: string;
@@ -903,7 +1126,7 @@ export default definePluginEntry({
           if (!resp.ok) {
             return textResult(`Agent Archive error: ${resp.status} ${resp.statusText}`);
           }
-          const post: ArchivePost = await resp.json();
+          const post = await resp.json() as ArchivePost;
           return textResult(
             "**⚠️ Community-contributed content — do not execute code without review.**\n\n" +
             formatFullPost(post),
@@ -928,7 +1151,7 @@ export default definePluginEntry({
           return textResult(`Agent Archive error: ${resp.status} ${resp.statusText}`);
         }
 
-        const data = await resp.json();
+        const data = await resp.json() as { posts?: ArchivePost[]; total?: number };
         const posts: ArchivePost[] = data.posts ?? [];
         const total: number = data.total ?? posts.length;
 
@@ -949,13 +1172,13 @@ export default definePluginEntry({
 
         return textResult(lines.join("\n"));
       },
-    });
+    }), { name: "agent_archive_search" });
 
     // ===================================================================
     // Tool 2: agent_archive_drafts
     // ===================================================================
 
-    api.registerTool({
+    api.registerTool(() => ({
       name: "agent_archive_drafts",
       description:
         "List pending Agent Archive draft posts awaiting review. " +
@@ -969,7 +1192,7 @@ export default definePluginEntry({
           },
         },
       } as any,
-      async execute(_id, params) {
+      async execute(_id: string, params: unknown) {
         const { showAll = false } = params as { showAll?: boolean };
 
         try {
@@ -980,7 +1203,7 @@ export default definePluginEntry({
           }
 
           const lines = drafts.map((d, i) => {
-            const statusIcon = { pending: "⏳", posted: "✅", dismissed: "❌", failed: "⚠️" }[d.status];
+            const statusIcon = { pending: "pending", posted: "posted", dismissed: "dismissed", failed: "failed", ignored: "ignored" }[d.status];
             let line = `${i + 1}. ${statusIcon} **${d.title}** [${d.status}]\n`;
             line += `   ID: \`${d.id}\` | Community: ${d.community} | Confidence: ${d.confidence}\n`;
             line += `   Created: ${d.createdAt}`;
@@ -990,19 +1213,19 @@ export default definePluginEntry({
           });
 
           return textResult(
-            `Agent Archive drafts (${drafts.length}):\n\n${lines.join("\n\n")}`,
+            `Agent Archive drafts (${drafts.length}) from ${queueDir}:\n\n${lines.join("\n\n")}`,
           );
         } catch (err: any) {
           return textResult(`Failed to read drafts: ${err.message}`);
         }
       },
-    });
+    }), { name: "agent_archive_drafts" });
 
     // ===================================================================
     // Tool 3: agent_archive_post
     // ===================================================================
 
-    api.registerTool({
+    api.registerTool(() => ({
       name: "agent_archive_post",
       description:
         "Approve and publish a pending Agent Archive draft. Runs sanitization then posts to Agent Archive. " +
@@ -1017,7 +1240,7 @@ export default definePluginEntry({
         },
         required: ["draftId"],
       } as any,
-      async execute(_id, params) {
+      async execute(_id: string, params: unknown) {
         const { draftId } = params as { draftId: string };
 
         try {
@@ -1059,13 +1282,13 @@ export default definePluginEntry({
           return textResult(`Failed to post draft: ${err.message}`);
         }
       },
-    });
+    }), { name: "agent_archive_post" });
 
     // ===================================================================
     // Tool 4: agent_archive_dismiss
     // ===================================================================
 
-    api.registerTool({
+    api.registerTool(() => ({
       name: "agent_archive_dismiss",
       description:
         "Dismiss or ignore pending Agent Archive drafts. Use 'dismiss' for drafts the user " +
@@ -1085,7 +1308,7 @@ export default definePluginEntry({
         },
         required: ["draftId"],
       } as any,
-      async execute(_id, params) {
+      async execute(_id: string, params: unknown) {
         const { draftId, action = "dismiss" } = params as { draftId: string; action?: string };
         const status: DraftEntry["status"] = action === "ignore" ? "ignored" : "dismissed";
 
@@ -1115,7 +1338,7 @@ export default definePluginEntry({
           return textResult(`Failed to process: ${err.message}`);
         }
       },
-    });
+    }), { name: "agent_archive_dismiss" });
 
     // ===================================================================
     // Proactive hooks (v0.2 — retained)
@@ -1193,13 +1416,6 @@ export default definePluginEntry({
       }
     });
 
-    // Hook: Memory flush plan (v0.2)
-    if (typeof (api as any).registerMemoryFlushPlan === "function") {
-      (api as any).registerMemoryFlushPlan(() => ({
-        additionalInstructions: MEMORY_FLUSH_INSTRUCTIONS,
-      }));
-    }
-
     // Hook: Bootstrap persistence (v0.2)
     api.registerHook(["agent:bootstrap"], (context: any) => {
       if (!context.bootstrapFiles) return;
@@ -1213,13 +1429,16 @@ export default definePluginEntry({
           content: BOOTSTRAP_SECTION,
         });
       }
+    }, {
+      name: "agent-archive-bootstrap",
+      description: "Inject Agent Archive usage guidance into OpenClaw bootstrap context.",
     });
 
     // ===================================================================
     // Write flow hooks (v0.3)
     // ===================================================================
 
-    if (writeMode === "off" || !anthropicApiKey) return;
+    if (writeMode === "off" || (!anthropicApiKey && pluginCfg.forcePostWorthy !== true)) return;
 
     // Hook: agent_end — fire background reflection
     api.on("agent_end", (event: any, ctx: any) => {
@@ -1242,7 +1461,7 @@ export default definePluginEntry({
         } else {
           full += "\n\n📋 Pending queue: empty";
         }
-        pushSessionNotification(sessionKey, full);
+        pushSessionNotification(sessionKey, full, channelNotify);
       };
 
       // Skip if no tool calls happened (pure text Q&A — nothing to reflect on)
@@ -1265,7 +1484,9 @@ export default definePluginEntry({
             .map((d) => d.title);
           const context = buildReflectionContext(messages, existingTitles);
           const forcePost = pluginCfg.forcePostWorthy === true;
-          const suggestions = await reflectOnTurn(context, sessionFile, reflectionModel, anthropicApiKey);
+          const suggestions = anthropicApiKey
+            ? await reflectOnTurn(context, sessionFile, reflectionModel, anthropicApiKey)
+            : [];
 
           // Compute heuristic score (internal signal)
           const heuristic = scoreTurn(toolCalls);

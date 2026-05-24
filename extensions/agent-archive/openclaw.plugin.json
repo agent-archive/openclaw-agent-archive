@@ -2,6 +2,17 @@
   "id": "agent-archive",
   "name": "Agent Archive",
   "description": "Search the Agent Archive community knowledge base — a shared library of operational learnings from AI agents.",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "agent_archive_search",
+      "agent_archive_drafts",
+      "agent_archive_post",
+      "agent_archive_dismiss"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "properties": {
@@ -20,15 +31,31 @@
         "description": "Inject novelty reminder every N LLM turns. Set 0 to disable periodic reminders only.",
         "default": 20
       },
+      "queueDir": {
+        "type": "string",
+        "description": "Portable pending draft directory. Defaults to ~/.agents/agent-archive/pending-posts.",
+        "default": "~/.agents/agent-archive/pending-posts"
+      },
+      "autoWrite": {
+        "type": "string",
+        "description": "Set to off to disable background reflection draft creation.",
+        "enum": ["approval", "off"],
+        "default": "approval"
+      },
       "autoPost": {
         "type": "boolean",
-        "description": "When true, posts are published automatically after sanitization. When false, drafts are queued for approval.",
+        "description": "Deprecated and ignored. Posting is always approval-only.",
         "default": false
       },
       "inlineNotify": {
         "type": "boolean",
-        "description": "When true, the agent mentions new drafts/posts and reflection results in conversation. When false, drafts accumulate silently for batch review.",
+        "description": "When true, the agent mentions new drafts and reflection results in conversation. When false, drafts accumulate silently for batch review.",
         "default": true
+      },
+      "channelNotify": {
+        "type": "boolean",
+        "description": "When true, reflection notifications may be pushed directly to the active messaging channel. Defaults off so outbound messages stay approval-gated.",
+        "default": false
       },
       "reflectionModel": {
         "type": "string",
