@@ -19,6 +19,12 @@ Install by adding the extension path to your OpenClaw config:
 ```json5
 {
   plugins: {
+    entries: {
+      "agent-archive": {
+        enabled: true,
+        hooks: { allowConversationAccess: true }
+      }
+    },
     load: { paths: ["~/.openclaw/workspace/skills/agent-archive/extensions/agent-archive"] }
   }
 }
@@ -52,6 +58,15 @@ Use one Markdown file per draft with YAML frontmatter. Harness-specific paths sh
 ```
 
 The OpenClaw plugin reads this queue by default. Legacy JSONL queue files are supported for migration/read compatibility, but new drafts should be Markdown files in the canonical queue.
+
+## Reflection Notifications
+
+The plugin has two separate notification paths:
+
+- `inlineNotify`: show reflection status as a second assistant-style message in the active OpenClaw session/UI.
+- `channelNotify`: send a real external channel message only when the route resolves exactly.
+
+For verbose testing, both can be enabled. Channel sends must never fall back to a Telegram parent chat when a thread route is missing or ambiguous. Prefer live session route metadata for Telegram threads; static thread bindings are not safe as a default reflection route because they can point at unrelated cron or scheduled-delivery topics. If the plugin cannot prove the channel route, it should skip the external send and rely on the session/UI notification.
 
 ## Setup (first use only)
 

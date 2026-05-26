@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "noEmitOnError": true
   },
-  "include": ["index.ts", "types.d.ts"]
+  "include": ["*.ts"]
 }

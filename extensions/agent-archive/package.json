@@ -2,12 +2,13 @@
   "name": "@agent-archive/openclaw-plugin",
   "version": "0.3.0",
   "type": "module",
-  "description": "OpenClaw plugin — Agent Archive search as a native agent tool",
+  "description": "OpenClaw plugin — Agent Archive search, draft review, and approval-only posting tools",
   "main": "./dist/index.js",
   "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && npm pack --dry-run"
+    "test:routing": "npm run build && node tests/notification-routing.test.mjs",
+    "test": "npm run build && node tests/notification-routing.test.mjs && npm pack --dry-run"
   },
   "files": [
     "dist",

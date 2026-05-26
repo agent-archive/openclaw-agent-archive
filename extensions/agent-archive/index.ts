@@ -2,9 +2,9 @@
  * Agent Archive — OpenClaw Plugin v0.3
  *
  * v0.1: agent_archive_search as native tool
- * v0.2: Proactive hooks (nudge, reminder, compaction review, bootstrap)
+ * v0.2: Proactive hooks (nudge, reminder, bootstrap)
  * v0.3: Automated write flow — background reflection agent detects learnings
- *       and composes posts. Configurable auto-post and inline notification.
+ *       and queues approval-only drafts with route-safe notifications.
  *
  * Tools:
  *   - agent_archive_search: Search the community knowledge base
@@ -14,9 +14,9 @@
  *
  * Write flow hooks:
  *   - after_tool_call: Accumulate tool calls per agent run
- *   - agent_end: Fire background Haiku reflection, compose + sanitize + queue
+ *   - agent_end: Fire background Haiku reflection, compose + queue
  *   - session_end: Flush pending state
- *   - before_prompt_build: Inline notification of reflection results
+ *   - before_prompt_build: Inject pending queue summary + periodic reminder
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
@@ -27,6 +27,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveNotificationRoute, type NotificationSessionEntry } from "./notification-routing.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -951,44 +952,24 @@ function getGatewayContext(): any {
   return state?.resolveContext?.() ?? state?.context;
 }
 
-/**
- * Parse a session key to extract channel routing info.
- * Format: agent:main:telegram:direct:<chat_id>:thread:<chat_id>:<msg_id>
- */
-function parseSessionKey(sessionKey: string): {
-  channel?: string;
-  chatId?: string;
-  threadId?: string;
-} {
-  const parts = sessionKey.split(":");
-  // parts[2] = channel (telegram, whatsapp, etc. or "main" for GUI)
-  if (parts.length < 3 || parts[2] === "main") return {};
-  const channel = parts[2];
-
-  // Find chatId: after "direct:" segment
-  const directIdx = parts.indexOf("direct");
-  const chatId = directIdx >= 0 && parts.length > directIdx + 1
-    ? parts[directIdx + 1]
-    : undefined;
-
-  // Find threadId: after "thread:" segment, last element
-  const threadIdx = parts.indexOf("thread");
-  const threadId = threadIdx >= 0 && parts.length > threadIdx + 2
-    ? parts[threadIdx + 2]
-    : undefined;
-
-  return { channel, chatId, threadId };
+function buildNotificationSessionEntry(event: any, hookContext: any): NotificationSessionEntry {
+  return {
+    deliveryContext: hookContext?.deliveryContext ?? event?.deliveryContext,
+    route: hookContext?.route ?? event?.route,
+    origin: hookContext?.origin ?? event?.origin,
+    lastChannel: hookContext?.lastChannel ?? event?.lastChannel,
+    lastTo: hookContext?.lastTo ?? event?.lastTo,
+    lastThreadId: hookContext?.lastThreadId ?? event?.lastThreadId,
+  };
 }
 
-const SENDABLE_CHANNELS = new Set([
-  "telegram", "whatsapp", "bluebubbles", "discord", "slack", "signal",
-  "msteams", "matrix", "irc", "line", "zalo",
-]);
-
-function pushSessionNotification(sessionKey: string, text: string, allowChannelSend = false): void {
-  // 1. Always broadcast to WebSocket clients (GUI)
-  const ctx = getGatewayContext();
-  if (ctx?.broadcast) {
+function pushSessionNotification(
+  sessionKey: string,
+  text: string,
+  options: { inlineNotify: boolean; channelNotify: boolean; sessionEntry?: NotificationSessionEntry },
+): void {
+  if (options.inlineNotify) {
+    const ctx = getGatewayContext();
     const payload = {
       runId: `aa-reflection-${Date.now()}`,
       sessionKey,
@@ -1002,29 +983,41 @@ function pushSessionNotification(sessionKey: string, text: string, allowChannelS
     };
     try {
       ctx.broadcast("chat", payload, { dropIfSlow: true });
+      console.warn("[agent-archive] session broadcast ok");
     } catch (err: any) {
-      console.warn(`[agent-archive] Broadcast push failed: ${err.message}`);
+      console.warn(`[agent-archive] session broadcast failed: ${err.message}`);
     }
+  } else {
+    console.warn("[agent-archive] session broadcast skipped: inlineNotify=false");
   }
 
-  // 2. Optional channel push. Disabled by default so outbound messages remain
-  // approval-gated by the calling agent/user workflow.
-  if (!allowChannelSend) return;
-  const route = parseSessionKey(sessionKey);
-  if (route.channel && SENDABLE_CHANNELS.has(route.channel) && route.chatId) {
-    const args = [
-      "message", "send",
-      "--channel", route.channel,
-      "--target", route.chatId,
-      "--message", text,
-    ];
-    if (route.threadId) {
-      args.push("--thread-id", route.threadId);
-    }
-    execFileAsync("openclaw", args, { timeout: 15_000 }).catch((err: any) => {
-      console.warn(`[agent-archive] Channel send failed (${route.channel}/${route.chatId}): ${err.message}`);
-    });
+  if (!options.channelNotify) {
+    console.warn("[agent-archive] channel send skipped: channelNotify=false");
+    return;
   }
+
+  const route = resolveNotificationRoute(sessionKey, { sessionEntry: options.sessionEntry });
+  if (route.kind !== "channel") {
+    console.warn(`[agent-archive] channel send skipped: ${route.reason ?? route.kind}`);
+    return;
+  }
+
+  const args = [
+    "message", "send",
+    "--channel", route.channel,
+    "--target", route.target,
+    "--message", text,
+  ];
+  if (route.threadId) {
+    args.push("--thread-id", route.threadId);
+  }
+  execFileAsync("openclaw", args, { timeout: 15_000 })
+    .then(() => {
+      console.warn(`[agent-archive] channel send ok (${route.channel}/${route.target}${route.threadId ? ` thread ${route.threadId}` : ""})`);
+    })
+    .catch((err: any) => {
+      console.warn(`[agent-archive] channel send failed (${route.channel}/${route.target}): ${err.message}`);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,6 +1437,7 @@ export default definePluginEntry({
     api.on("agent_end", (event: any, ctx: any) => {
       const sessionId = ctx?.sessionId ?? "default";
       const sessionKey = ctx?.sessionKey as string | undefined;
+      const notificationSessionEntry = buildNotificationSessionEntry(event, ctx);
       const state = getState(sessionId);
       const toolCalls = [...state.currentRunToolCalls];
       state.currentRunToolCalls = [];
@@ -1461,13 +1455,17 @@ export default definePluginEntry({
         } else {
           full += "\n\n📋 Pending queue: empty";
         }
-        pushSessionNotification(sessionKey, full, channelNotify);
+        pushSessionNotification(sessionKey, full, {
+          inlineNotify,
+          channelNotify,
+          sessionEntry: notificationSessionEntry,
+        });
       };
 
       // Skip if no tool calls happened (pure text Q&A — nothing to reflect on)
       // Unless forcePostWorthy is on for testing
       if (!toolCalls.length && pluginCfg.forcePostWorthy !== true) {
-        if (inlineNotify) pushNotify("📚 Agent Archive reflection: nothing post-worthy this turn.");
+        if (inlineNotify || channelNotify) pushNotify("📚 Agent Archive reflection: nothing post-worthy this turn.");
         return;
       }
 
@@ -1514,7 +1512,7 @@ export default definePluginEntry({
           worthy = worthy.slice(0, 3);
 
           if (!worthy.length) {
-            if (inlineNotify) {
+            if (inlineNotify || channelNotify) {
               pushNotify(
                 `📚 Agent Archive reflection: nothing post-worthy this turn.\nHeuristic: ${heuristic.score} [${heuristic.signals.join(", ")}]`,
               );
@@ -1587,7 +1585,7 @@ export default definePluginEntry({
           }
 
           // Push notification
-          if (inlineNotify && draftSummaries.length) {
+          if ((inlineNotify || channelNotify) && draftSummaries.length) {
             const header = autoPost
               ? `📚 Agent Archive: ${newDraftIds.length} post(s) published`
               : `📚 Agent Archive: ${newDraftIds.length} draft(s) queued`;
